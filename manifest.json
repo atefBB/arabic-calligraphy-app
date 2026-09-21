@@ -1,0 +1,17 @@
+{
+  "name": "قلم. — Arabic calligraphy",
+  "short_name": "قلم.",
+  "description": "Arabic calligraphy canvas with a qalam nib, RTL text and practice guides.",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f5eeda",
+  "theme_color": "#f5eeda",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

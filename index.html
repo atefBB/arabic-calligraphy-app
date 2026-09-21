@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>قلم. — Arabic calligraphy</title>
+<meta name="description" content="An Arabic calligraphy canvas: a qalam nib that thickens and thins with movement, RTL text, practice guides and instant export.">
+<meta name="theme-color" content="#f5eeda">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Aref+Ruqaa:wght@400;700&family=Noto+Naskh+Arabic:wght@400;500;600;700&family=Reem+Kufi:wght@400..700&family=Scheherazade+New:wght@400;700&display=swap" rel="stylesheet">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+<link rel="manifest" href="manifest.json">
+</head>
+<body>
+
+<!-- ============================ CANVAS ============================ -->
+<div id="stage">
+  <canvas id="board"></canvas>
+  <canvas id="overlay"></canvas>
+</div>
+<div id="cursor" aria-hidden="true"></div>
+
+<!-- ============================ TOP BAR ============================ -->
+<header id="topbar">
+  <div class="brand">قلم<span>.</span></div>
+
+  <div class="pager">
+    <button id="prevPage" class="ghost" title="الصفحة السابقة (→)"><i data-lucide="chevron-left"></i></button>
+    <button id="openOverview" class="pagecount" title="كل الصفحات (Tab)"><span id="pageNum">01</span><em>/</em><span id="pageTotal">01</span></button>
+    <button id="nextPage" class="ghost" title="الصفحة التالية (←)"><i data-lucide="chevron-right"></i></button>
+  </div>
+
+  <div class="top-actions">
+    <button id="guideBtn" class="ghost" title="شبكة النقاط (G)"><i data-lucide="grid-3x3"></i></button>
+    <button id="newPage" class="ghost" title="صفحة جديدة (N)"><i data-lucide="plus"></i></button>
+    <button id="openOverview2" class="ghost" title="كل الصفحات (Tab)"><i data-lucide="layout-grid"></i></button>
+    <button id="exportBtn" class="ghost" title="تصدير (S)"><i data-lucide="arrow-down-to-line"></i></button>
+  </div>
+</header>
+
+<!-- ============================ TOOLBAR ============================ -->
+<div id="toolbar">
+  <div class="group">
+    <button id="undoBtn" class="tool" title="تراجع (⌘Z)"><i data-lucide="undo-2"></i></button>
+    <button id="redoBtn" class="tool" title="إعادة (⇧⌘Z)"><i data-lucide="redo-2"></i></button>
+  </div>
+
+  <span class="sep"></span>
+
+  <div class="group">
+    <button class="tool" data-tool="qalam" title="القلم (Q)"><i data-lucide="pen-line"></i></button>
+    <button class="tool" data-tool="text" title="نص (T)"><i data-lucide="type"></i></button>
+    <button class="tool" data-tool="eraser" title="ممحاة (E)"><i data-lucide="eraser"></i></button>
+  </div>
+
+  <span class="sep"></span>
+
+  <div class="group">
+    <button id="sizeBtn" class="tool wide" title="سماكة القلم ([ / ])">
+      <span id="sizeDot" class="dot-preview"></span>
+    </button>
+    <button id="angleBtn" class="tool wide" title="زاوية القلم (− / =)">
+      <span id="angleBadge">50°</span>
+    </button>
+    <button id="colorBtn" class="tool wide" title="الحبر">
+      <span id="colorDot" class="ink-preview"></span>
+    </button>
+    <button id="fontBtn" class="tool wide" title="الخط"><span id="fontBadge">نسخ</span></button>
+  </div>
+
+  <span class="sep"></span>
+
+  <div class="group">
+    <button id="clearBtn" class="tool" title="مسح الصفحة (⌫)"><i data-lucide="trash-2"></i></button>
+  </div>
+
+  <!-- size popover -->
+  <div id="sizePop" class="pop">
+    <div class="pop-row" id="sizeRow"></div>
+    <input id="sizeRange" class="range" type="range" min="2" max="40" value="8">
+    <div class="pop-label"><span id="sizeVal">8</span> px</div>
+  </div>
+
+  <!-- nib angle popover -->
+  <div id="anglePop" class="pop">
+    <div class="pop-title">زاوية سنّ القلم</div>
+    <input id="angleRange" class="range" type="range" min="0" max="90" value="50">
+    <div class="pop-label"><span id="angleVal">50</span>°</div>
+  </div>
+
+  <!-- ink popover -->
+  <div id="colorPop" class="pop">
+    <div class="pop-row" id="colorRow"></div>
+    <div class="pop-foot">
+      <label class="custom-color">
+        <input id="colorInput" type="color" value="#221c14">
+        <i data-lucide="pipette"></i>
+        <span>لون مخصص</span>
+      </label>
+      <div class="opacity">
+        <span>شفافية</span>
+        <input id="opacityRange" class="range" type="range" min="10" max="100" value="100">
+      </div>
+    </div>
+  </div>
+
+  <!-- fonts popover -->
+  <div id="fontPop" class="pop">
+    <div class="pop-title">اختر الخط</div>
+    <div id="fontRow" class="pop-col"></div>
+  </div>
+</div>
+
+<!-- ============================ TEXT BAR ============================ -->
+<div id="textBar" class="hidden">
+  <input id="textInput" type="text" dir="rtl" lang="ar" autocomplete="off"
+         placeholder="اكتب هنا…" maxlength="200">
+  <div class="text-info">
+    <span id="textHint"></span>
+    <div class="text-actions">
+      <button id="textOk" class="btn-outline"><i data-lucide="check"></i> إدراج</button>
+      <button id="textCancel" class="ghost" title="إلغاء (Esc)"><i data-lucide="x"></i></button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ OVERVIEW ============================ -->
+<section id="overview" class="hidden">
+  <div class="ov-head">
+    <div>
+      <h2>الصفحات</h2>
+      <p id="ovCount">1 صفحة</p>
+    </div>
+    <div class="ov-actions">
+      <button id="ovNew" class="btn-outline"><i data-lucide="plus"></i> صفحة جديدة</button>
+      <button id="ovExportAll" class="btn-outline"><i data-lucide="images"></i> تصدير الكل</button>
+      <button id="ovClose" class="ghost" title="إغلاق (Esc)"><i data-lucide="x"></i></button>
+    </div>
+  </div>
+  <div id="ovGrid" class="ov-grid"></div>
+</section>
+
+<!-- ============================ WAQF BADGE ============================ -->
+<div id="waqfBadge" dir="rtl" lang="ar" role="note" aria-label="وقف لله تعالى">وقف لله تعالى</div>
+
+<!-- ============================ TOAST ============================ -->
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
