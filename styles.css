@@ -30,6 +30,7 @@ i{font-style:normal;}
 #stage{position:fixed;inset:0;}
 #board,#overlay{position:absolute;inset:0;width:100%;height:100%;display:block;}
 #board{touch-action:none;cursor:crosshair;}
+#overlay{pointer-events:none;}
 
 #cursor{
   position:fixed;top:0;left:0;z-index:15;pointer-events:none;
