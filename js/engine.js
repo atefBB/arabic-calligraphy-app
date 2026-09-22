@@ -427,15 +427,23 @@ function drawStroke() {
 
   const sp = smoothSamples(pts);
 
-  /* The swept nib edge — the ink region of a rigid flat nib. The two long
-   * sides are the trajectory shifted by ±u, and the caps close flat along
-   * the nib edge itself, at the true cut angle. */
-  pctx.beginPath();
-  pctx.moveTo(sp[0].x + u.x, sp[0].y + u.y);
-  for (let i = 1; i < sp.length; i++) pctx.lineTo(sp[i].x + u.x, sp[i].y + u.y);
-  for (let i = sp.length - 1; i >= 0; i--) pctx.lineTo(sp[i].x - u.x, sp[i].y - u.y);
-  pctx.closePath();
-  pctx.fill();
+  /* The swept nib edge — the ink region of a rigid flat nib. Stamping the
+   * nib edge along each consecutive pair of samples as *separate quads*:
+   * a single merged polygon self-intersects whenever the pen returns over
+   * its own path (ج ع ل م heads, loops…) and the non-zero winding rule then
+   * cuts a hole under the return — the written ink beneath dissolves. Filling
+   * quad by quad, overlapping passages simply re-ink the same pigment, so
+   * the sweeps keep the flat cut caps and the shape stays solid. */
+  for (let i = 0; i < sp.length - 1; i++) {
+    const a = sp[i], c = sp[i + 1];
+    pctx.beginPath();
+    pctx.moveTo(a.x + u.x, a.y + u.y);
+    pctx.lineTo(c.x + u.x, c.y + u.y);
+    pctx.lineTo(c.x - u.x, c.y - u.y);
+    pctx.lineTo(a.x - u.x, a.y - u.y);
+    pctx.closePath();
+    pctx.fill();
+  }
 
   /* Minimum "belly" thickness along the centre line so strokes running
    * parallel to the nib stay ink-true (round caps fill the tiny join gaps). */

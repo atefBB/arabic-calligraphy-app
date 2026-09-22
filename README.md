@@ -13,6 +13,7 @@ Current release: **v1.1.0** (tag [`v1.1.0`](https://github.com/atefBB/arabic-cal
 ## Features
 
 - **Qalam tool** — simulates a cut reed nib: stroke width follows the writing direction relative to a fixed nib angle, giving the classic thick/thin modulation of Arabic calligraphy. Strokes are rendered as the *swept nib edge*, so every start and end is a crisp flat cut at the pen's angle — just like a real قصب. Press harder with a stylus for a fuller line.
+- **True paper sizes** — the nib is sized in real millimeters, like a physical qalam: 1, 1.5, 2, 2.5, … 6 mm (CSS reference 96dpi), with a continuous mm slider as well.
 - **True Naskh cut** — the nib angle defaults to 40° (the 35–45° range used for النّسخ، وأمّا 25° للرقعة والأقلام اللينة); quick presets (25/35/40/45/60/90) plus a full 0–90° slider for other scripts.
 - **Nuqta dot-grid guides** — the classic practice grid, scaled to your nib, toggleable (hidden in exported PNGs)
 - **Ink palette** — black, sepia, sienna, charcoal, gold, rust plus a custom picker and opacity
@@ -29,7 +30,7 @@ Current release: **v1.1.0** (tag [`v1.1.0`](https://github.com/atefBB/arabic-cal
 | --- | --- |
 | `Q` | Qalam |
 | `E` | Eraser |
-| `[` / `]` | Decrease / increase nib length |
+| `[` / `]` | Decrease / increase nib size (mm, 0.5 steps) |
 | `-` / `=` | Decrease / increase nib angle |
 | `G` | Toggle nuqta guide dots |
 | `⌘Z` / `⇧⌘Z` | Undo / Redo (also `Ctrl+Y`) |
@@ -83,6 +84,10 @@ width(θ) = L·|sin(θ − φ)| + w·|cos(θ − φ)|
 But a real pen does not print a rounded variable-width line. Because the nib is a rigid straight edge, each stroke is the **sweep of that edge**: the ink region is the path ⊕ nib segment. The engine fills the polygon whose two long sides are the trajectory shifted by ±(nib edge)/2 — the caps then close flat along the nib edge at the true cut angle, giving the sharp angled starts and ends of authentic qalam writing. A thin centre-line stroke adds the minimum belly `w` so strokes running parallel to the nib stay ink-true.
 
 ## Changelog
+
+### v1.3.0 — mm nib sizes & solid return strokes (2026-09-22)
+- Nib sized in real millimeters like a physical qalam: chips at 1, 1.5, 2, 2.5, … 6 mm plus a continuous mm slider; `[` / `]` step in 0.5 mm. (1 mm = 3.78 px at CSS reference 96 dpi.)
+- Fix: letters written by *return strokes* over the same line (the ج head, loops in ع م، س، ص…) no longer dissolve the ink beneath. Strokes are now stamped from each consecutive nib-edge quad instead of one merged polygon, so the canvas winding rule can never hollow out the shape under a return. Single-pass strokes look unchanged.
 
 ### v1.2.0 — zoom & nib cut direction (2026-09-22)
 - **Zoom & pan**: wheel or two-finger pinch zooms about the cursor; middle-button (or `Alt`+drag) pans; toolbar buttons and `Ctrl + / − / 0` too. Everything is drawn on a fixed full-page canvas and *viewed* through a scale/pan transform, so undo/redo, pages, the overview and PNG export are always the full page — zooming never crops history.

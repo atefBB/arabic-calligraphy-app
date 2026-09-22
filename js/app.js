@@ -53,8 +53,11 @@ const zoomInBtn  = $('zoomIn');
 const zoomValue  = $('zoomValue');
 const mirrorBtn  = $('mirrorBtn');
 
-const INKS  = ['#221c14', '#3a2416', '#4a2c12', '#0f172a', '#6b4f1d', '#7b2f24'];
-const SIZES = [4, 6, 8, 12, 18, 26];
+const INKS   = ['#221c14', '#3a2416', '#4a2c12', '#0f172a', '#6b4f1d', '#7b2f24'];
+const MM_PX  = 96 / 25.4;                                   // 1mm at CSS reference 96dpi
+const SIZES  = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6]; // mm
+const mmPx   = (mm) => mm * MM_PX;
+const pxMm   = (px) => Math.round((px / MM_PX) * 2) / 2;    // awkward -> nearest 0.5mm
 
 /* ------------------------------------------------------------------ *
  * Toast
@@ -88,8 +91,9 @@ SIZES.forEach((s) => {
   btn.className = 'size-chip';
   btn.dataset.size = s;
   const dot = document.createElement('i');
-  dot.style.width = Math.min(s, 22) + 'px';
-  dot.style.height = Math.min(s, 22) + 'px';
+  const dpx = Math.min(Math.max(mmPx(s), 3), 22);
+  dot.style.width = dpx + 'px';
+  dot.style.height = dpx + 'px';
   btn.appendChild(dot);
   btn.addEventListener('click', () => setSize(s));
   sizeRow.appendChild(btn);
@@ -105,11 +109,12 @@ INKS.forEach((hex) => {
   colorRow.appendChild(btn);
 });
 
-function setSize(px) {
-  E.state.size = Math.max(2, Math.min(40, Math.round(px)));
-  sizeRange.value = E.state.size;
-  sizeVal.textContent = E.state.size;
-  [...sizeRow.children].forEach((c) => c.classList.toggle('is-active', +c.dataset.size === E.state.size));
+function setSize(mm) {
+  mm = Math.max(1, Math.min(6, mm));
+  E.state.size = mmPx(mm);
+  sizeRange.value = mm;
+  sizeVal.textContent = mm;
+  [...sizeRow.children].forEach((c) => c.classList.toggle('is-active', +c.dataset.size === mm));
   paintPreviews();
 }
 
@@ -472,8 +477,8 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowLeft') { E.goTo(E.index + 1); return; }   // forward in RTL
   if (e.key === 'ArrowRight') { E.goTo(E.index - 1); return; }  // backward in RTL
   if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); E.clearPage(); say('مُسحَت الصفحة'); return; }
-  if (k === '[') { setSize(E.state.size - (E.state.size > 12 ? 4 : 1)); return; }
-  if (k === ']') { setSize(E.state.size + (E.state.size >= 12 ? 4 : 1)); return; }
+  if (k === '[') { setSize(pxMm(E.state.size) - 0.5); return; }
+  if (k === ']') { setSize(pxMm(E.state.size) + 0.5); return; }
   if (k === '-') { setAngle(E.state.angle - 5); return; }
   if (k === '=') { setAngle(E.state.angle + 5); return; }
 });
@@ -509,7 +514,7 @@ function init() {
   if (window.lucide) lucide.createIcons();
   E.resizeCanvas(false);
   setTool('qalam');
-  setSize(8);
+  setSize(2);    // default 2mm qalam
   setAngle(40);
   setColor('#221c14');
   E.commit();
