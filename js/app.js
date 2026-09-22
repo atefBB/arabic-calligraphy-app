@@ -48,16 +48,13 @@ const ovClose   = $('ovClose');
 const ovNew     = $('ovNew');
 const ovExportAll = $('ovExportAll');
 
+const zoomOutBtn = $('zoomOut');
+const zoomInBtn  = $('zoomIn');
+const zoomValue  = $('zoomValue');
+const mirrorBtn  = $('mirrorBtn');
+
 const INKS  = ['#221c14', '#3a2416', '#4a2c12', '#0f172a', '#6b4f1d', '#7b2f24'];
 const SIZES = [4, 6, 8, 12, 18, 26];
-
-const FONTS = [
-  { css: 'Amiri, serif',        name: 'أميري',   sub: 'نسخ' },
-  { css: 'Aref Ruqaa, serif',   name: 'أريف',    sub: 'رقعة' },
-  { css: 'Reem Kufi, sans-serif', name: 'ريم',   sub: 'كوفي' },
-  { css: 'Scheherazade New, serif', name: 'شهرزاد', sub: 'نصّ' },
-  { css: 'Noto Naskh Arabic, serif', name: 'نوتو نسخ', sub: 'نسخ' },
-];
 
 /* ------------------------------------------------------------------ *
  * Toast
@@ -186,7 +183,8 @@ document.addEventListener('pointerdown', (e) => {
  * Cursor ring
  * ------------------------------------------------------------------ */
 function updateCursorSize() {
-  const d = Math.max(6, E.state.size);
+  const z = E.state.view ? E.state.view.zoom : 1;
+  const d = Math.max(6, E.state.size * z);
   cursorEl.style.width = d + 'px';
   cursorEl.style.height = d + 'px';
 }
@@ -204,34 +202,144 @@ function pos(e) {
   const r = board.getBoundingClientRect();
   return { x: e.clientX - r.left, y: e.clientY - r.top };
 }
+function paperPos(e) {
+  return E.screenToPaper(pos(e));
+}
 function pressureOf(e) {
   return e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 1;
 }
 
+/* Two-finger pinch zoom (touch). We track live pointers on the board; when
+ * two are down we zoom about their midpoint and keep the paper under the
+ * fingers fixed (which also pans). Also pan by dragging mid-finger. */
+const livePointers = new Map();
+let pinch = null;
+let panStart = null;
+
+function pointersMid() {
+  const pts = [...livePointers.values()];
+  return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+}
+
 board.addEventListener('pointerdown', (e) => {
+  const p = pos(e);
+  livePointers.set(e.pointerId, p);
+
+  if (e.button === 1 || (e.button === 0 && e.altKey)) {
+    if (!panStart) panStart = { x: e.clientX, y: e.clientY };
+    closePops(null);
+    board.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    return;
+  }
+  if (livePointers.size === 2) {
+    if (E.state.drawing) finish();
+    closePops(null);
+    const [a, b] = [...livePointers.values()];
+    pinch = {
+      zoom: E.state.view.zoom,
+      panX: E.state.view.panX,
+      panY: E.state.view.panY,
+      mid: pointersMid(),
+      dist: Math.hypot(a.x - b.x, a.y - b.y),
+    };
+    board.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    return;
+  }
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   closePops(null);
-  const p = pos(e);
-
+  const pp = paperPos(e);
   board.setPointerCapture(e.pointerId);
   if (E.state.tool === 'qalam' || E.state.tool === 'eraser') {
-    E.startStroke(p, pressureOf(e));
+    E.startStroke(pp, pressureOf(e));
   }
 });
 
 board.addEventListener('pointermove', (e) => {
+  livePointers.set(e.pointerId, pos(e));
+
+  if (panStart) {
+    E.panBy(e.clientX - panStart.x, e.clientY - panStart.y);
+    panStart = { x: e.clientX, y: e.clientY };
+    updateZoomUI();
+    return;
+  }
+  if (pinch && livePointers.size === 2) {
+    const [a, b] = [...livePointers.values()];
+    const mid = pointersMid();
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    const factor = pinch.dist ? dist / pinch.dist : 1;
+    const zoom = Math.max(E.ZOOM_MIN, Math.min(E.ZOOM_MAX, pinch.zoom * factor));
+    /* keep the paper point that was under the start midpoint under the new
+     * midpoint, scaled by the finger distance ratio */
+    const paper = {
+      x: (pinch.mid.x - pinch.panX) / pinch.zoom,
+      y: (pinch.mid.y - pinch.panY) / pinch.zoom,
+    };
+    const panX = mid.x - paper.x * zoom;
+    const panY = mid.y - paper.y * zoom;
+    E.setViewLocked(zoom, panX, panY);
+    updateZoomUI();
+    return;
+  }
   if (!E.state.drawing) return;
   const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
-  for (const ev of events) E.extendStroke(pos(ev), pressureOf(ev));
+  for (const ev of events) E.extendStroke(paperPos(ev), pressureOf(ev));
 });
+
+function releasePointer(id) {
+  livePointers.delete(id);
+  if (livePointers.size < 2) pinch = null;
+}
+board.addEventListener('pointerup', (e) => {
+  const wasPan = !!panStart;
+  panStart = null;
+  const wasPinch = !!pinch;
+  releasePointer(e.pointerId);
+  if (wasPan || wasPinch) return;
+  finish();
+});
+board.addEventListener('pointercancel', (e) => {
+  panStart = null;
+  releasePointer(e.pointerId);
+  E.endStroke();
+});
+
+/* wheel = zoom about the cursor */
+board.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const p = pos(e);
+  const factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.001 : 0.002));
+  E.zoomAt(p.x, p.y, factor);
+  updateZoomUI();
+}, { passive: false });
 
 function finish() {
   if (!E.state.drawing) return;
   E.endStroke();
   E.commit();
 }
-board.addEventListener('pointerup', finish);
-board.addEventListener('pointercancel', () => { E.endStroke(); });
+
+/* ------------------------------------------------------------------ *
+ * Zoom & nib mirror
+ * ------------------------------------------------------------------ */
+function updateZoomUI() {
+  const pct = Math.round(E.state.view.zoom * 100);
+  zoomValue.textContent = pct + '%';
+  zoomValue.title = `${pct}%`;
+  updateCursorSize();
+}
+
+zoomInBtn.addEventListener('click', () => { E.zoomBy(1.25); updateZoomUI(); });
+zoomOutBtn.addEventListener('click', () => { E.zoomBy(0.8); updateZoomUI(); });
+zoomValue.addEventListener('click', () => { E.zoomReset(); updateZoomUI(); say('٪100 تكبير'); });
+
+mirrorBtn.addEventListener('click', () => {
+  E.state.mirror = !E.state.mirror;
+  mirrorBtn.classList.toggle('is-active', E.state.mirror);
+  say(E.state.mirror ? 'القطة مقلوبة' : 'القطة على الاتجاه الطبيعي');
+});
 
 /* ------------------------------------------------------------------ *
  * Actions
@@ -345,11 +453,13 @@ window.addEventListener('keydown', (e) => {
   if (tag === 'input' || tag === 'textarea') return;
 
   const meta = e.ctrlKey || e.metaKey;
+  const k = e.key.toLowerCase();
   if (meta && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? E.redo() : E.undo(); return; }
   if (meta && e.key.toLowerCase() === 'y') { e.preventDefault(); E.redo(); return; }
+  if (meta && (k === '=' || k === '+')) { e.preventDefault(); E.zoomBy(1.25); updateZoomUI(); return; }
+  if (meta && k === '-') { e.preventDefault(); E.zoomBy(0.8); updateZoomUI(); return; }
+  if (meta && k === '0') { e.preventDefault(); E.zoomReset(); updateZoomUI(); return; }
   if (meta) return;
-
-  const k = e.key.toLowerCase();
 
   if (e.key === 'Escape') { closeOverview(); closePops(null); return; }
   if (e.key === 'Tab') { e.preventDefault(); overview.classList.contains('hidden') ? openOverview() : closeOverview(); return; }
@@ -379,6 +489,7 @@ function syncUI() {
   prevBtn.disabled = E.index === 0;
   nextBtn.disabled = E.index === E.pages.length - 1;
   if (!overview.classList.contains('hidden')) renderOverview();
+  updateZoomUI();
 }
 E.onChange(syncUI);
 

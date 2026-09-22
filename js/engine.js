@@ -1,5 +1,5 @@
 /* ------------------------------------------------------------------ *
- * engine.js — canvas, qalam nib, history and pages
+ * engine.js — canvas, qalam nib, zoom, history and pages
  * ------------------------------------------------------------------ */
 
 export const stage   = document.getElementById('stage');
@@ -10,18 +10,32 @@ export const octx    = overlay.getContext('2d');
 
 export const PAPER = '#f5eeda';
 
+/* The full-page drawing lives on an off-screen canvas (`page`) at paper
+ * resolution. `board` is only a *viewport*: it composites `page` through
+ * the view transform (zoom + pan). That way undo/redo and export are
+ * always the full page, no matter how far you are zoomed in. */
+const page  = document.createElement('canvas');
+const pctx  = page.getContext('2d');
+let  pageRatio = 1;                          // dpr frozen when the page is created
+
 export const state = {
   tool: 'qalam',
   color: '#221c14',
   size: 8,          // nib length in px
   angle: 40,        // nib cut angle in degrees (naskh qalam ≈ 35–45°)
+  mirror: false,    // flip the qalam cut to the opposite slant
   opacity: 1,
   pressure: 1,
   drawing: false,
   pts: [],
-  cache: null,      // pre-stroke snapshot while drawing
+  cache: null,      // pre-stroke snapshot of the page while drawing
   guides: true,
+  paper: { w: 0, h: 0 },                    // logical sheet size (frozen at load)
+  view: { zoom: 1, panX: 0, panY: 0 },      // paper -> screen view transform
 };
+
+export const ZOOM_MIN = 0.5;
+export const ZOOM_MAX = 8;
 
 /* ----------------------------- pages ----------------------------- */
 let uid = 0;
@@ -39,13 +53,39 @@ export function cssSize() {
   return { w: stage.clientWidth || window.innerWidth, h: stage.clientHeight || window.innerHeight };
 }
 
+function screenToDevice(c) {
+  c.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+/* --------------------------- rendering ---------------------------
+ * render() composites the page onto the visible board through the view
+ * transform; the whole visible area keeps the paper tone so zooming out
+ * looks seamless. */
+export function render() {
+  const r = dpr();
+  const { zoom, panX, panY } = state.view;
+  ctx.save();
+  screenToDevice(ctx);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(0, 0, board.width, board.height);
+  ctx.setTransform(r * zoom, 0, 0, r * zoom, r * panX, r * panY);
+  ctx.drawImage(page, 0, 0, page.width, page.height, 0, 0, state.paper.w, state.paper.h);
+  ctx.restore();
+}
+
+export function refresh() {
+  render();
+  drawGuides();
+}
+
 /* --------------------------- paper & guides ---------------------------
  * The guide dots live on the transparent overlay layer; #board holds only
- * ink on paper. That way snapshots and exports never need guide stripping
- * and undo/redo always reproduce the exact drawing. */
+ * ink on paper. They are paper-space dots shown through the same view
+ * transform, so their pitch follows the zoom. */
 export function clearGuides() {
   octx.save();
-  octx.setTransform(1, 0, 0, 1, 0, 0);
+  screenToDevice(octx);
   octx.clearRect(0, 0, overlay.width, overlay.height);
   octx.restore();
 }
@@ -53,11 +93,12 @@ export function clearGuides() {
 export function drawGuides() {
   if (!state.guides) return;
   clearGuides();
-  const { w, h } = cssSize();
   const step = Math.max(10, Math.round(state.size * 1.4));
-  const ratio = dpr();
+  const r = dpr();
+  const { zoom, panX, panY } = state.view;
+  const { w, h } = state.paper;
   octx.save();
-  octx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  octx.setTransform(r * zoom, 0, 0, r * zoom, r * panX, r * panY);
   octx.globalAlpha = 1;
   octx.fillStyle = 'rgba(48,38,24,0.14)';
   for (let y = step; y < h; y += step)
@@ -67,52 +108,87 @@ export function drawGuides() {
 }
 
 export function fillPaper() {
-  const { w, h } = cssSize();
-  ctx.save();
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.fillStyle = PAPER;
-  ctx.fillRect(0, 0, w, h);
-  ctx.restore();
-  drawGuides();
+  pctx.save();
+  pctx.setTransform(pageRatio, 0, 0, pageRatio, 0, 0);
+  pctx.globalAlpha = 1;
+  pctx.globalCompositeOperation = 'source-over';
+  pctx.fillStyle = PAPER;
+  pctx.fillRect(0, 0, state.paper.w, state.paper.h);
+  pctx.restore();
+  refresh();
 }
 
-export function resizeCanvas(preserve = true) {
+export function resizeCanvas(_preserve = true) {
   const { w, h } = cssSize();
   const ratio = dpr();
 
-  let snap = null;
-  if (preserve && board.width && board.height) {
-    snap = document.createElement('canvas');
-    snap.width = board.width;
-    snap.height = board.height;
-    snap.getContext('2d').drawImage(board, 0, 0);
+  if (!state.paper.w) {
+    pageRatio = ratio;
+    state.paper.w = w;
+    state.paper.h = h;
+    page.width = Math.round(w * pageRatio);
+    page.height = Math.round(h * pageRatio);
+    pctx.setTransform(1, 0, 0, 1, 0, 0);
+    pctx.fillStyle = PAPER;
+    pctx.fillRect(0, 0, page.width, page.height);
   }
 
   board.width = Math.round(w * ratio);
   board.height = Math.round(h * ratio);
   overlay.width = Math.round(w * ratio);
   overlay.height = Math.round(h * ratio);
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
 
-  fillPaper();
-
-  if (snap) {
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(snap, 0, 0, board.width, board.height);
-    ctx.restore();
-  }
+  refresh();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 }
 
+/* --------------------------- view (zoom & pan) --------------------------- */
+export function setViewLocked(zoom, panX, panY) {
+  state.view.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom));
+  state.view.panX = panX;
+  state.view.panY = panY;
+  refresh();
+}
+
+export function screenToPaper(s) {
+  const { zoom, panX, panY } = state.view;
+  return { x: (s.x - panX) / zoom, y: (s.y - panY) / zoom };
+}
+
+export function zoomAt(cssX, cssY, factor) {
+  const v = state.view;
+  const px = (cssX - v.panX) / v.zoom;
+  const py = (cssY - v.panY) / v.zoom;
+  v.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v.zoom * factor));
+  v.panX = cssX - px * v.zoom;
+  v.panY = cssY - py * v.zoom;
+  refresh();
+}
+
+export function zoomBy(factor) {
+  const r = board.getBoundingClientRect();
+  zoomAt(r.width / 2, r.height / 2, factor);
+}
+
+export function zoomReset() {
+  setViewLocked(1, 0, 0);
+}
+
+export function panBy(dx, dy) {
+  const v = state.view;
+  v.panX += dx;
+  v.panY += dy;
+  refresh();
+}
+
 /* --------------------------- export & snapshot ---------------------------
- * The board never contains guide dots (they live on the overlay), so the
- * canvas can be exported / snapshotted directly. */
+ * The page canvas never contains guide dots (they live on the overlay), so
+ * the full page can be exported / snapshotted directly, independent of the
+ * current zoom level. */
 
 export function exportPng(cb) {
-  board.toBlob(cb, 'image/png');
+  page.toBlob(cb, 'image/png');
 }
 
 /* ----------------------------- history ----------------------------- */
@@ -123,7 +199,7 @@ export const emit = () => listeners.forEach((fn) => fn());
 
 export function snapshot() {
   try {
-    return board.toDataURL('image/png');
+    return page.toDataURL('image/png');
   } catch { return null; }
 }
 
@@ -143,16 +219,14 @@ export function paint(dataUrl) {
     if (!dataUrl) { fillPaper(); resolve(); return; }
     const img = new Image();
     img.onload = () => {
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = 1;
-      ctx.clearRect(0, 0, board.width, board.height);
-      ctx.fillStyle = PAPER;
-      ctx.fillRect(0, 0, board.width, board.height);
-      ctx.drawImage(img, 0, 0, board.width, board.height);
-      ctx.restore();
-      drawGuides();
+      pctx.save();
+      pctx.setTransform(1, 0, 0, 1, 0, 0);
+      pctx.globalCompositeOperation = 'source-over';
+      pctx.globalAlpha = 1;
+      pctx.clearRect(0, 0, page.width, page.height);
+      pctx.drawImage(img, 0, 0, page.width, page.height);
+      pctx.restore();
+      refresh();
       resolve();
     };
     img.onerror = () => { fillPaper(); resolve(); };
@@ -160,7 +234,7 @@ export function paint(dataUrl) {
   });
 }
 
-export async function refresh() {
+export async function refreshPage() {
   const p = current();
   await paint(p.snapshot);
 }
@@ -255,16 +329,27 @@ export function syncCurrentSnapshot() { stash(); }
  * two long sides are the path translated by ±(nib edge)/2, exactly the union
  * of the nib edge as it passes along the trajectory. A thin stroke along the
  * centre line adds the minimum w (the "belly") so hairlines stay visible.
+ *
+ * The cut *direction* matters: with `mirror` off, descending-to-the-LEFT
+ * strokes come out thick (the classic Naskh slant — تِنزِلُ الخطوطُ السمينة
+ * إلى اليسار، كما في نزلات النونِ والراءِ والباء). `mirror` flips the cut
+ * so the thick lines fall to the RIGHT instead — useful when practicing
+ * other scripts or a left-handed hold.
  * ---------------------------------------------------------------------- */
 
+function phi() {
+  const a = state.angle * Math.PI / 180;
+  return state.mirror ? -a : a;
+}
+
 export function nibEdge(press) {
-  const phi = state.angle * Math.PI / 180;
+  const p = phi();
   const L = (state.size * press) / 2;
-  return { x: Math.cos(phi) * L, y: Math.sin(phi) * L };
+  return { x: Math.cos(p) * L, y: Math.sin(p) * L };
 }
 
 export function nibWidth(theta, press = 1) {
-  const d = theta - state.angle * Math.PI / 180;
+  const d = theta - phi();
   const L = state.size * press;
   const w = Math.max(0.7, state.size * 0.16) * press;
   return Math.max(0.8, L * Math.abs(Math.sin(d)) + w * Math.abs(Math.cos(d)));
@@ -279,11 +364,11 @@ function applyInk(c) {
 }
 
 function restoreCache() {
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, board.width, board.height);
-  if (state.cache) ctx.drawImage(state.cache, 0, 0);
-  ctx.restore();
+  pctx.save();
+  pctx.setTransform(1, 0, 0, 1, 0, 0);
+  pctx.clearRect(0, 0, page.width, page.height);
+  if (state.cache) pctx.drawImage(state.cache, 0, 0);
+  pctx.restore();
 }
 
 /* Densely resample the control points onto the actual smoothed curve so
@@ -317,7 +402,9 @@ function drawStroke() {
   const pts = state.pts;
   if (!pts.length) return;
   const press = 0.5 + 0.5 * state.pressure;
-  applyInk(ctx);
+  pctx.save();
+  pctx.setTransform(pageRatio, 0, 0, pageRatio, 0, 0);
+  applyInk(pctx);
   const u = nibEdge(press);
 
   if (pts.length === 1) {
@@ -325,15 +412,16 @@ function drawStroke() {
      * at the cut angle — the classic nuqta. */
     const p = pts[0];
     const w = Math.max(0.7, state.size * 0.16) * press;
-    const perp = { x: -Math.sin(state.angle * Math.PI / 180) * w / 2, y: Math.cos(state.angle * Math.PI / 180) * w / 2 };
-    ctx.beginPath();
-    ctx.moveTo(p.x + u.x + perp.x, p.y + u.y + perp.y);
-    ctx.lineTo(p.x + u.x - perp.x, p.y + u.y - perp.y);
-    ctx.lineTo(p.x - u.x - perp.x, p.y - u.y - perp.y);
-    ctx.lineTo(p.x - u.x + perp.x, p.y - u.y + perp.y);
-    ctx.closePath();
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    const pp = phi();
+    const perp = { x: -Math.sin(pp) * w / 2, y: Math.cos(pp) * w / 2 };
+    pctx.beginPath();
+    pctx.moveTo(p.x + u.x + perp.x, p.y + u.y + perp.y);
+    pctx.lineTo(p.x + u.x - perp.x, p.y + u.y - perp.y);
+    pctx.lineTo(p.x - u.x - perp.x, p.y - u.y - perp.y);
+    pctx.lineTo(p.x - u.x + perp.x, p.y - u.y + perp.y);
+    pctx.closePath();
+    pctx.fill();
+    pctx.restore();
     return;
   }
 
@@ -342,24 +430,24 @@ function drawStroke() {
   /* The swept nib edge — the ink region of a rigid flat nib. The two long
    * sides are the trajectory shifted by ±u, and the caps close flat along
    * the nib edge itself, at the true cut angle. */
-  ctx.beginPath();
-  ctx.moveTo(sp[0].x + u.x, sp[0].y + u.y);
-  for (let i = 1; i < sp.length; i++) ctx.lineTo(sp[i].x + u.x, sp[i].y + u.y);
-  for (let i = sp.length - 1; i >= 0; i--) ctx.lineTo(sp[i].x - u.x, sp[i].y - u.y);
-  ctx.closePath();
-  ctx.fill();
+  pctx.beginPath();
+  pctx.moveTo(sp[0].x + u.x, sp[0].y + u.y);
+  for (let i = 1; i < sp.length; i++) pctx.lineTo(sp[i].x + u.x, sp[i].y + u.y);
+  for (let i = sp.length - 1; i >= 0; i--) pctx.lineTo(sp[i].x - u.x, sp[i].y - u.y);
+  pctx.closePath();
+  pctx.fill();
 
   /* Minimum "belly" thickness along the centre line so strokes running
    * parallel to the nib stay ink-true (round caps fill the tiny join gaps). */
   const w = Math.max(0.7, state.size * 0.16) * press;
-  ctx.beginPath();
-  ctx.moveTo(sp[0].x, sp[0].y);
-  for (let i = 1; i < sp.length; i++) ctx.lineTo(sp[i].x, sp[i].y);
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = w;
-  ctx.stroke();
-  ctx.globalAlpha = 1;
+  pctx.beginPath();
+  pctx.moveTo(sp[0].x, sp[0].y);
+  for (let i = 1; i < sp.length; i++) pctx.lineTo(sp[i].x, sp[i].y);
+  pctx.lineCap = 'round';
+  pctx.lineJoin = 'round';
+  pctx.lineWidth = w;
+  pctx.stroke();
+  pctx.restore();
 }
 
 export function startStroke(p, pressure = 1) {
@@ -367,10 +455,13 @@ export function startStroke(p, pressure = 1) {
   state.pts = [p];
   state.pressure = pressure;
   state.cache = document.createElement('canvas');
-  state.cache.width = board.width;
-  state.cache.height = board.height;
-  state.cache.getContext('2d').drawImage(board, 0, 0);
-  if (state.tool === 'qalam') drawStroke();
+  state.cache.width = page.width;
+  state.cache.height = page.height;
+  state.cache.getContext('2d').drawImage(page, 0, 0);
+  if (state.tool === 'qalam') {
+    drawStroke();
+    render();
+  }
 }
 
 export function extendStroke(p, pressure = 1) {
@@ -386,6 +477,7 @@ export function extendStroke(p, pressure = 1) {
   } else {
     drawStroke();
   }
+  render();
 }
 
 export function endStroke() {
@@ -394,20 +486,21 @@ export function endStroke() {
   state.pts = [];
   state.cache = null;
   state.pressure = 1;
+  render();
 }
 
 export function eraseSegment(a, b) {
-  const theta = Math.atan2(b.y - a.y, b.x - a.x);
-  ctx.save();
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.strokeStyle = PAPER;
-  ctx.lineWidth = Math.max(state.size * 1.4, 8);
-  ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.lineTo(b.x, b.y);
-  ctx.stroke();
-  ctx.restore();
+  pctx.save();
+  pctx.setTransform(pageRatio, 0, 0, pageRatio, 0, 0);
+  pctx.lineCap = 'round';
+  pctx.lineJoin = 'round';
+  pctx.globalAlpha = 1;
+  pctx.globalCompositeOperation = 'source-over';
+  pctx.strokeStyle = PAPER;
+  pctx.lineWidth = Math.max(state.size * 1.4, 8);
+  pctx.beginPath();
+  pctx.moveTo(a.x, a.y);
+  pctx.lineTo(b.x, b.y);
+  pctx.stroke();
+  pctx.restore();
 }

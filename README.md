@@ -17,6 +17,8 @@ Current release: **v1.1.0** (tag [`v1.1.0`](https://github.com/atefBB/arabic-cal
 - **Nuqta dot-grid guides** — the classic practice grid, scaled to your nib, toggleable (hidden in exported PNGs)
 - **Ink palette** — black, sepia, sienna, charcoal, gold, rust plus a custom picker and opacity
 - **Multiple pages** with thumbnails and a grid overview
+- **Zoom** — wheel / pinch to zoom about the cursor, pan with a middle-button drag, buttons or `Ctrl + / − / 0`; strokes always land on the *paper*, and exports stay full-page regardless of zoom
+- **Qalam cut direction** — toggle the nib's cut slant in the angle popover: thick descenders to the left (the classic Naskh way) or to the right
 - **Undo / Redo** per page, clear page, export current page or all pages as PNG
 - **Offline-first PWA** — all scripts, icons and styles are bundled locally and cached by a service worker; no internet required after first load
 - Fully **RTL interface** in Arabic
@@ -36,6 +38,8 @@ Current release: **v1.1.0** (tag [`v1.1.0`](https://github.com/atefBB/arabic-cal
 | `Tab` | Toggle all-pages overview |
 | `←` / `→` | Next / previous page (RTL) |
 | `⌫` / `Delete` | Clear current page |
+| `Ctrl =` / `Ctrl −` | Zoom in / out |
+| `Ctrl 0` | Reset zoom to 100% |
 | `Esc` | Close overview / popovers |
 
 ## Project structure
@@ -79,6 +83,10 @@ width(θ) = L·|sin(θ − φ)| + w·|cos(θ − φ)|
 But a real pen does not print a rounded variable-width line. Because the nib is a rigid straight edge, each stroke is the **sweep of that edge**: the ink region is the path ⊕ nib segment. The engine fills the polygon whose two long sides are the trajectory shifted by ±(nib edge)/2 — the caps then close flat along the nib edge at the true cut angle, giving the sharp angled starts and ends of authentic qalam writing. A thin centre-line stroke adds the minimum belly `w` so strokes running parallel to the nib stay ink-true.
 
 ## Changelog
+
+### v1.2.0 — zoom & nib cut direction (2026-09-22)
+- **Zoom & pan**: wheel or two-finger pinch zooms about the cursor; middle-button (or `Alt`+drag) pans; toolbar buttons and `Ctrl + / − / 0` too. Everything is drawn on a fixed full-page canvas and *viewed* through a scale/pan transform, so undo/redo, pages, the overview and PNG export are always the full page — zooming never crops history.
+- **Qalam cut direction toggle** (`عكس اتجاه القطة`): flips the nib slope. With it off (default) the thick descenders fall to the **left** — the classic Naskh slant — flipping sends them to the right for other scripts or a left-handed hold.
 
 ### v1.1.0 — flat-cut qalam nib & offline-first (2026-09-22)
 - **True reed-pen rendering**: strokes are now the *sweep of the rigid flat nib edge* instead of a rounded variable-width line — every stroke starts and ends with the crisp angled cut of a real قصب, and a tap prints a parallelogram نُقطة at the cut angle.

@@ -87,6 +87,7 @@ i{font-style:normal;}
 }
 .ghost:hover{background:rgba(34,28,20,.06);}
 .ghost:disabled{opacity:.25;cursor:default;background:none;}
+.ghost.zoomval{width:auto;min-width:44px;padding:0 8px;font-size:11px;font-variant-numeric:tabular-nums;font-weight:600;}
 
 /* RTL: flip the pager chevrons so they point the right way */
 #prevPage i,#nextPage i{transform:scaleX(-1);}
@@ -170,6 +171,16 @@ i{font-style:normal;}
 .ang-chip.is-active{background:rgba(34,28,20,.12);}
 
 .pop-label{text-align:center;color:var(--muted);font-variant-numeric:tabular-nums;}
+
+.wide-btn{
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  width:100%;padding:7px 10px;border-radius:8px;
+  font-size:12px;font-weight:600;color:var(--muted);
+  border:1px solid var(--line);background:var(--panel-solid);
+  transition:background .15s ease,color .15s ease;
+}
+.wide-btn:hover{background:rgba(34,28,20,.06);}
+.wide-btn.is-active{background:var(--ink);color:var(--paper);}
 
 .range{
   width:100%;height:4px;appearance:none;-webkit-appearance:none;

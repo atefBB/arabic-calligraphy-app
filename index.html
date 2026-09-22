@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>قلم. — Arabic calligraphy</title>
-<meta name="description" content="An Arabic calligraphy canvas: a cut-reed qalam nib with true flat angled strokes, practice guides and instant export — works offline.">
+<meta name="description" content="An Arabic calligraphy canvas: a cut-reed qalam nib with true flat angled strokes, zoom, practice guides and instant export — works offline.">
 <meta name="theme-color" content="#f5eeda">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="styles.css">
@@ -30,6 +30,9 @@
   </div>
 
   <div class="top-actions">
+    <button id="zoomOut" class="ghost" title="تصغير (Ctrl −)"><i data-lucide="zoom-out"></i></button>
+    <button id="zoomValue" class="ghost zoomval" title="إعادة التكبير إلى 100% (Ctrl 0)">100%</button>
+    <button id="zoomIn" class="ghost" title="تكبير (Ctrl +)"><i data-lucide="zoom-in"></i></button>
     <button id="guideBtn" class="ghost" title="شبكة النقاط (G)"><i data-lucide="grid-3x3"></i></button>
     <button id="newPage" class="ghost" title="صفحة جديدة (N)"><i data-lucide="plus"></i></button>
     <button id="openOverview2" class="ghost" title="كل الصفحات (Tab)"><i data-lucide="layout-grid"></i></button>
@@ -84,6 +87,7 @@
     <div class="pop-row" id="angleRow"></div>
     <input id="angleRange" class="range" type="range" min="0" max="90" value="40" step="1">
     <div class="pop-label"><span id="angleVal">40</span>°</div>
+    <button id="mirrorBtn" class="wide-btn" title="قلب اتجاه القطة — سمين النزلات إلى اليسار (النسخ) أو إلى اليمين"><i data-lucide="repeat"></i> <span>عكس اتجاه القطة</span></button>
   </div>
 
   <!-- ink popover -->

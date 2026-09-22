@@ -1,4 +1,4 @@
-const CACHE = 'qalam-v2';
+const CACHE = 'qalam-v3';
 const ASSETS = [
   './',
   './index.html',
