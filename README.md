@@ -8,6 +8,8 @@ Built with plain HTML, CSS and vanilla JavaScript — no build tools, no framewo
 
 Deployed to GitHub Pages: <https://atefbb.github.io/arabic-calligraphy-app/>
 
+Current release: **v1.1.0** (tag [`v1.1.0`](https://github.com/atefBB/arabic-calligraphy-app/releases/tag/v1.1.0))
+
 ## Features
 
 - **Qalam tool** — simulates a cut reed nib: stroke width follows the writing direction relative to a fixed nib angle, giving the classic thick/thin modulation of Arabic calligraphy. Strokes are rendered as the *swept nib edge*, so every start and end is a crisp flat cut at the pen's angle — just like a real قصب. Press harder with a stylus for a fuller line.
@@ -76,6 +78,18 @@ width(θ) = L·|sin(θ − φ)| + w·|cos(θ − φ)|
 
 But a real pen does not print a rounded variable-width line. Because the nib is a rigid straight edge, each stroke is the **sweep of that edge**: the ink region is the path ⊕ nib segment. The engine fills the polygon whose two long sides are the trajectory shifted by ±(nib edge)/2 — the caps then close flat along the nib edge at the true cut angle, giving the sharp angled starts and ends of authentic qalam writing. A thin centre-line stroke adds the minimum belly `w` so strokes running parallel to the nib stay ink-true.
 
+## Changelog
+
+### v1.1.0 — flat-cut qalam nib & offline-first (2026-09-22)
+- **True reed-pen rendering**: strokes are now the *sweep of the rigid flat nib edge* instead of a rounded variable-width line — every stroke starts and ends with the crisp angled cut of a real قصب, and a tap prints a parallelogram نُقطة at the cut angle.
+- **Authentic Naskh default**: nib angle defaults to **40°** (the 35–45° cut of خط النسخ) with quick presets `25 / 35 / 40 / 45 / 60 / 90°` plus the 0–90° slider for other scripts (تركيب القطع الأخرى؛ الكوفي لا يُرسم بهذا القلم).
+- **Offline PWA**: lucide icons are bundled locally (`js/vendor/lucide.min.js`), Google Fonts CDN removed, and a service worker (`sw.js`) caches the whole app — it runs fully without internet after the first visit.
+- **Fixed undo forever-wiping the page**: guide dots were drawn on the drawing board, so history snapshots/export captured a blank page. The dots now live on a separate transparent overlay; `#board` holds only ink, so undo/redo and PNG export reproduce the drawing faithfully.
+- **Removed the text tool and font picker** (Amiri / Aref Ruqaa / Reem Kufi / …) — the app is a pure قلم workbench. No `T` shortcut anymore.
+
+### v1.0.0 — initial release
+- Qalam nib with thick/thin modulation, adjustable nib angle, nuqta dot-grid guides, ink palette, multiple pages, undo/redo, export, RTL Arabic interface, and an (online-dependent) text tool with Google Fonts and CDN icons.
+
 ## Roadmap
 
 - Preset compositions (بسم الله… أدعية)
@@ -90,7 +104,8 @@ The site is published straight from the `main` branch root. To ship a new versio
 ```sh
 git add .
 git commit -m "describe your change"
-git push
+git tag -a vX.Y.Z -m "vX.Y.Z — describe release"
+git push origin main --follow-tags
 ```
 
 GitHub rebuilds Pages automatically within a minute or two.
