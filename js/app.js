@@ -32,6 +32,7 @@ const anglePop   = $('anglePop');
 const angleRange = $('angleRange');
 const angleVal   = $('angleVal');
 const angleBadge = $('angleBadge');
+const angleRow   = $('angleRow');
 
 const colorBtn   = $('colorBtn');
 const colorPop   = $('colorPop');
@@ -39,17 +40,6 @@ const colorRow   = $('colorRow');
 const colorInput = $('colorInput');
 const colorDot   = $('colorDot');
 const opacityR   = $('opacityRange');
-
-const fontBtn   = $('fontBtn');
-const fontPop   = $('fontPop');
-const fontRow   = $('fontRow');
-const fontBadge = $('fontBadge');
-
-const textBar   = $('textBar');
-const textInput = $('textInput');
-const textHint  = $('textHint');
-const textOk    = $('textOk');
-const textCancel = $('textCancel');
 
 const overview  = $('overview');
 const ovGrid    = $('ovGrid');
@@ -89,8 +79,6 @@ function setTool(tool) {
   E.state.tool = tool;
   toolBtns.forEach((b) => b.classList.toggle('is-active', b.dataset.tool === tool));
   cursorEl.classList.toggle('eraser', tool === 'eraser');
-  cursorEl.classList.toggle('hide', tool === 'text');
-  if (tool === 'text') closeTextBar();
   paintPreviews();
 }
 toolBtns.forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
@@ -120,16 +108,6 @@ INKS.forEach((hex) => {
   colorRow.appendChild(btn);
 });
 
-FONTS.forEach((f) => {
-  const btn = document.createElement('button');
-  btn.className = 'font-chip';
-  btn.dataset.font = f.css;
-  btn.innerHTML = `${f.name}<small>${f.sub}</small>`;
-  btn.style.fontFamily = f.css;
-  btn.addEventListener('click', () => setFont(f.css, f.name));
-  fontRow.appendChild(btn);
-});
-
 function setSize(px) {
   E.state.size = Math.max(2, Math.min(40, Math.round(px)));
   sizeRange.value = E.state.size;
@@ -143,7 +121,19 @@ function setAngle(deg) {
   angleRange.value = E.state.angle;
   angleVal.textContent = E.state.angle;
   angleBadge.textContent = E.state.angle + '°';
+  [...angleRow.children].forEach((c) => c.classList.toggle('is-active', +c.dataset.angle === E.state.angle));
 }
+
+const ANGLES = [25, 35, 40, 45, 60, 90];
+ANGLES.forEach((a) => {
+  const btn = document.createElement('button');
+  btn.className = 'ang-chip';
+  btn.dataset.angle = a;
+  btn.textContent = a + '°';
+  btn.title = a + '°';
+  btn.addEventListener('click', () => setAngle(a));
+  angleRow.appendChild(btn);
+});
 
 function setColor(hex) {
   E.state.color = hex;
@@ -151,15 +141,6 @@ function setColor(hex) {
   [...colorRow.children].forEach((c) => c.classList.toggle('is-active', c.dataset.color.toLowerCase() === hex.toLowerCase()));
   if (E.state.tool === 'eraser') setTool('qalam');
   paintPreviews();
-}
-
-function setFont(css, name) {
-  E.state.font = css;
-  E.state.fontName = name;
-  fontBadge.textContent = name;
-  fontBadge.style.fontFamily = css;
-  [...fontRow.children].forEach((c) => c.classList.toggle('is-active', c.dataset.font === css));
-  if (E.state.text) E.renderTextOverlay();
 }
 
 function paintPreviews() {
@@ -178,12 +159,11 @@ colorInput.addEventListener('input', () => setColor(colorInput.value));
 opacityR.addEventListener('input', () => {
   E.state.opacity = +opacityR.value / 100;
   paintPreviews();
-  if (E.state.text) E.renderTextOverlay();
 });
 
 /* popovers */
 function closePops(except) {
-  [sizePop, anglePop, colorPop, fontPop].forEach((p) => { if (p !== except) p.classList.remove('open'); });
+  [sizePop, anglePop, colorPop].forEach((p) => { if (p !== except) p.classList.remove('open'); });
 }
 function togglePop(pop, anchor) {
   const open = !pop.classList.contains('open');
@@ -198,7 +178,6 @@ function togglePop(pop, anchor) {
 sizeBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePop(sizePop, sizeBtn); });
 angleBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePop(anglePop, angleBtn); });
 colorBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePop(colorPop, colorBtn); });
-fontBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePop(fontPop, fontBtn); });
 document.addEventListener('pointerdown', (e) => {
   if (!e.target.closest('.pop') && !e.target.closest('.tool.wide')) closePops(null);
 });
@@ -234,14 +213,7 @@ board.addEventListener('pointerdown', (e) => {
   closePops(null);
   const p = pos(e);
 
-  if (E.state.tool === 'text') {
-    E.state.textPos = p;
-    openTextBar();
-    return;
-  }
-
   board.setPointerCapture(e.pointerId);
-  E.state.start = p;
   if (E.state.tool === 'qalam' || E.state.tool === 'eraser') {
     E.startStroke(p, pressureOf(e));
   }
@@ -262,41 +234,6 @@ board.addEventListener('pointerup', finish);
 board.addEventListener('pointercancel', () => { E.endStroke(); });
 
 /* ------------------------------------------------------------------ *
- * Text tool
- * ------------------------------------------------------------------ */
-function openTextBar() {
-  textBar.classList.remove('hidden');
-  textInput.value = '';
-  E.state.text = '';
-  E.renderTextOverlay();
-  textInput.focus();
-  E.syncCurrentSnapshot();
-}
-function closeTextBar() {
-  textBar.classList.add('hidden');
-  E.state.text = '';
-  E.state.textPos = null;
-  E.clearOverlay();
-}
-function confirmText() {
-  E.commitText();
-  E.commit();
-  closeTextBar();
-  say('أُدرج النص');
-}
-textInput.addEventListener('input', () => {
-  E.state.text = textInput.value;
-  E.renderTextOverlay();
-  textHint.textContent = E.state.text ? `${E.state.text.length} حرف — الخط: ${E.state.fontName}` : '';
-});
-textInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); confirmText(); }
-  if (e.key === 'Escape') { e.preventDefault(); closeTextBar(); setTool('qalam'); }
-});
-textOk.addEventListener('click', confirmText);
-textCancel.addEventListener('click', () => { closeTextBar(); setTool('qalam'); });
-
-/* ------------------------------------------------------------------ *
  * Actions
  * ------------------------------------------------------------------ */
 undoBtn.addEventListener('click', () => E.undo());
@@ -310,7 +247,7 @@ nextBtn.addEventListener('click', () => E.goTo(E.index + 1));
 guideBtn.addEventListener('click', () => {
   E.state.guides = !E.state.guides;
   guideBtn.classList.toggle('active', E.state.guides);
-  E.refresh();
+  if (E.state.guides) E.drawGuides(); else E.clearGuides();
   say(E.state.guides ? 'شبكة النقاط: ظاهرة' : 'شبكة النقاط: مخفية');
 });
 
@@ -414,10 +351,10 @@ window.addEventListener('keydown', (e) => {
 
   const k = e.key.toLowerCase();
 
-  if (e.key === 'Escape') { closeOverview(); closePops(null); closeTextBar(); return; }
+  if (e.key === 'Escape') { closeOverview(); closePops(null); return; }
   if (e.key === 'Tab') { e.preventDefault(); overview.classList.contains('hidden') ? openOverview() : closeOverview(); return; }
 
-  const map = { q: 'qalam', t: 'text', e: 'eraser' };
+  const map = { q: 'qalam', e: 'eraser' };
   if (map[k]) { setTool(map[k]); return; }
   if (k === 'n') { e.preventDefault(); E.addPage().then(() => say('صفحة جديدة')); return; }
   if (k === 's') { e.preventDefault(); exportBtn.click(); return; }
@@ -462,10 +399,13 @@ function init() {
   E.resizeCanvas(false);
   setTool('qalam');
   setSize(8);
-  setAngle(50);
+  setAngle(40);
   setColor('#221c14');
-  setFont(FONTS[0].css, FONTS[0].name);
   E.commit();
   syncUI();
+  // Register service worker for offline support
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  }
 }
 requestAnimationFrame(init);

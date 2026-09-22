@@ -14,17 +14,13 @@ export const state = {
   tool: 'qalam',
   color: '#221c14',
   size: 8,          // nib length in px
-  angle: 50,        // nib cut angle in degrees
+  angle: 40,        // nib cut angle in degrees (naskh qalam ≈ 35–45°)
   opacity: 1,
   pressure: 1,
   drawing: false,
   pts: [],
   cache: null,      // pre-stroke snapshot while drawing
   guides: true,
-  font: 'Amiri, serif',
-  fontName: 'Amiri',
-  text: '',
-  textPos: null,
 };
 
 /* ----------------------------- pages ----------------------------- */
@@ -43,18 +39,31 @@ export function cssSize() {
   return { w: stage.clientWidth || window.innerWidth, h: stage.clientHeight || window.innerHeight };
 }
 
-/* --------------------------- paper & guides --------------------------- */
+/* --------------------------- paper & guides ---------------------------
+ * The guide dots live on the transparent overlay layer; #board holds only
+ * ink on paper. That way snapshots and exports never need guide stripping
+ * and undo/redo always reproduce the exact drawing. */
+export function clearGuides() {
+  octx.save();
+  octx.setTransform(1, 0, 0, 1, 0, 0);
+  octx.clearRect(0, 0, overlay.width, overlay.height);
+  octx.restore();
+}
+
 export function drawGuides() {
   if (!state.guides) return;
+  clearGuides();
   const { w, h } = cssSize();
   const step = Math.max(10, Math.round(state.size * 1.4));
-  ctx.save();
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = 'rgba(48,38,24,0.14)';
+  const ratio = dpr();
+  octx.save();
+  octx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  octx.globalAlpha = 1;
+  octx.fillStyle = 'rgba(48,38,24,0.14)';
   for (let y = step; y < h; y += step)
     for (let x = step; x < w; x += step)
-      ctx.fillRect(x - 0.7, y - 0.7, 1.4, 1.4);
-  ctx.restore();
+      octx.fillRect(x - 0.7, y - 0.7, 1.4, 1.4);
+  octx.restore();
 }
 
 export function fillPaper() {
@@ -80,9 +89,11 @@ export function resizeCanvas(preserve = true) {
     snap.getContext('2d').drawImage(board, 0, 0);
   }
 
-  [board, overlay].forEach((c) => { c.width = Math.round(w * ratio); c.height = Math.round(h * ratio); });
+  board.width = Math.round(w * ratio);
+  board.height = Math.round(h * ratio);
+  overlay.width = Math.round(w * ratio);
+  overlay.height = Math.round(h * ratio);
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  octx.setTransform(ratio, 0, 0, ratio, 0, 0);
 
   fillPaper();
 
@@ -96,25 +107,12 @@ export function resizeCanvas(preserve = true) {
   ctx.lineJoin = 'round';
 }
 
-/* ---------------------- snapshot w/o guides data ---------------------- */
-function stripGuides(fn) {
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  const tmp = document.createElement('canvas');
-  tmp.width = board.width;
-  tmp.height = board.height;
-  tmp.getContext('2d').drawImage(board, 0, 0);
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = PAPER;
-  ctx.fillRect(0, 0, board.width, board.height);
-  fn();
-  ctx.drawImage(tmp, 0, 0);
-  ctx.restore();
-}
+/* --------------------------- export & snapshot ---------------------------
+ * The board never contains guide dots (they live on the overlay), so the
+ * canvas can be exported / snapshotted directly. */
 
 export function exportPng(cb) {
-  stripGuides(() => board.toBlob(cb, 'image/png'));
+  board.toBlob(cb, 'image/png');
 }
 
 /* ----------------------------- history ----------------------------- */
@@ -125,9 +123,7 @@ export const emit = () => listeners.forEach((fn) => fn());
 
 export function snapshot() {
   try {
-    let data;
-    stripGuides(() => { data = board.toDataURL('image/png'); });
-    return data;
+    return board.toDataURL('image/png');
   } catch { return null; }
 }
 
@@ -244,13 +240,34 @@ export async function removePage(i) {
 
 export function syncCurrentSnapshot() { stash(); }
 
-/* ------------------------------ qalam nib ------------------------------ */
-export function nibWidth(theta) {
+/* ------------------------------ qalam nib ------------------------------
+ * A cut-reed qalam is a thin, straight rectangle of ink — length L (the
+ * "nib length") and width w — held at a fixed cut angle φ (the qalam slant
+ * of the pen, 35–45° for Naskh, adjustable for other scripts). As the pen
+ * moves along a direction θ the exposed cross-section is
+ *
+ *   width(θ) = L·|sin(θ − φ)| + w·|cos(θ − φ)|
+ *
+ * Because the nib is a rigid straight edge, every stroke is the *sweep of
+ * that edge*: the ink region is the path ⊕ nib segment. That sweep is what
+ * produces the true flat, angled start/end cuts of a real qalam — a rounded
+ * variable-width line can never print that. So we fill the polygon whose
+ * two long sides are the path translated by ±(nib edge)/2, exactly the union
+ * of the nib edge as it passes along the trajectory. A thin stroke along the
+ * centre line adds the minimum w (the "belly") so hairlines stay visible.
+ * ---------------------------------------------------------------------- */
+
+export function nibEdge(press) {
   const phi = state.angle * Math.PI / 180;
-  const L = state.size;
-  const w = Math.max(1, state.size * 0.16);
-  const d = theta - phi;
-  return L * Math.abs(Math.sin(d)) + w * Math.abs(Math.cos(d));
+  const L = (state.size * press) / 2;
+  return { x: Math.cos(phi) * L, y: Math.sin(phi) * L };
+}
+
+export function nibWidth(theta, press = 1) {
+  const d = theta - state.angle * Math.PI / 180;
+  const L = state.size * press;
+  const w = Math.max(0.7, state.size * 0.16) * press;
+  return Math.max(0.8, L * Math.abs(Math.sin(d)) + w * Math.abs(Math.cos(d)));
 }
 
 function applyInk(c) {
@@ -269,34 +286,78 @@ function restoreCache() {
   ctx.restore();
 }
 
+/* Densely resample the control points onto the actual smoothed curve so
+ * the swept polygon follows the ribbon without kinks between samples. */
+function smoothSamples(pts) {
+  if (pts.length < 3) return pts.slice();
+  const out = [pts[0]];
+  const add = (p) => {
+    const q = out[out.length - 1];
+    if ((p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y) > 0.01) out.push(p);
+  };
+  for (let i = 1; i < pts.length - 1; i++) {
+    const m0 = { x: (pts[i - 1].x + pts[i].x) / 2, y: (pts[i - 1].y + pts[i].y) / 2 };
+    const m1 = { x: (pts[i].x + pts[i + 1].x) / 2, y: (pts[i].y + pts[i + 1].y) / 2 };
+    add(m0);
+    const len = Math.hypot(m1.x - m0.x, m1.y - m0.y) + Math.hypot(pts[i].x - m0.x, pts[i].y - m0.y);
+    const steps = Math.max(3, Math.min(16, Math.ceil(len / 2)));
+    for (let s = 1; s <= steps; s++) {
+      const t = s / steps, u = 1 - t;
+      add({
+        x: u * u * m0.x + 2 * u * t * pts[i].x + t * t * m1.x,
+        y: u * u * m0.y + 2 * u * t * pts[i].y + t * t * m1.y,
+      });
+    }
+  }
+  add(pts[pts.length - 1]);
+  return out;
+}
+
 function drawStroke() {
   const pts = state.pts;
-  if (pts.length < 2) {
-    applyInk(ctx);
+  if (!pts.length) return;
+  const press = 0.5 + 0.5 * state.pressure;
+  applyInk(ctx);
+  const u = nibEdge(press);
+
+  if (pts.length === 1) {
+    /* A tap: the square cut edge pressed flat leaves a parallelogram mark
+     * at the cut angle — the classic nuqta. */
+    const p = pts[0];
+    const w = Math.max(0.7, state.size * 0.16) * press;
+    const perp = { x: -Math.sin(state.angle * Math.PI / 180) * w / 2, y: Math.cos(state.angle * Math.PI / 180) * w / 2 };
     ctx.beginPath();
-    ctx.arc(pts[0].x, pts[0].y, Math.max(1, nibWidth(Math.PI / 4) / 2) * (0.5 + 0.5 * state.pressure), 0, Math.PI * 2);
+    ctx.moveTo(p.x + u.x + perp.x, p.y + u.y + perp.y);
+    ctx.lineTo(p.x + u.x - perp.x, p.y + u.y - perp.y);
+    ctx.lineTo(p.x - u.x - perp.x, p.y - u.y - perp.y);
+    ctx.lineTo(p.x - u.x + perp.x, p.y - u.y + perp.y);
+    ctx.closePath();
     ctx.fill();
     ctx.globalAlpha = 1;
     return;
   }
-  applyInk(ctx);
-  const n = pts.length;
-  const press = 0.5 + 0.5 * state.pressure;
-  for (let i = 1; i < n - 1; i++) {
-    const m0 = { x: (pts[i - 1].x + pts[i].x) / 2, y: (pts[i - 1].y + pts[i].y) / 2 };
-    const m1 = { x: (pts[i].x + pts[i + 1].x) / 2, y: (pts[i].y + pts[i + 1].y) / 2 };
-    const theta = Math.atan2(pts[i + 1].y - pts[i - 1].y, pts[i + 1].x - pts[i - 1].x);
-    ctx.lineWidth = nibWidth(theta) * press;
-    ctx.beginPath();
-    ctx.moveTo(m0.x, m0.y);
-    ctx.quadraticCurveTo(pts[i].x, pts[i].y, m1.x, m1.y);
-    ctx.stroke();
-  }
-  const theta = Math.atan2(pts[n - 1].y - pts[n - 2].y, pts[n - 1].x - pts[n - 2].x);
-  ctx.lineWidth = nibWidth(theta) * press;
+
+  const sp = smoothSamples(pts);
+
+  /* The swept nib edge — the ink region of a rigid flat nib. The two long
+   * sides are the trajectory shifted by ±u, and the caps close flat along
+   * the nib edge itself, at the true cut angle. */
   ctx.beginPath();
-  ctx.moveTo(pts[n - 2].x, pts[n - 2].y);
-  ctx.lineTo(pts[n - 1].x, pts[n - 1].y);
+  ctx.moveTo(sp[0].x + u.x, sp[0].y + u.y);
+  for (let i = 1; i < sp.length; i++) ctx.lineTo(sp[i].x + u.x, sp[i].y + u.y);
+  for (let i = sp.length - 1; i >= 0; i--) ctx.lineTo(sp[i].x - u.x, sp[i].y - u.y);
+  ctx.closePath();
+  ctx.fill();
+
+  /* Minimum "belly" thickness along the centre line so strokes running
+   * parallel to the nib stay ink-true (round caps fill the tiny join gaps). */
+  const w = Math.max(0.7, state.size * 0.16) * press;
+  ctx.beginPath();
+  ctx.moveTo(sp[0].x, sp[0].y);
+  for (let i = 1; i < sp.length; i++) ctx.lineTo(sp[i].x, sp[i].y);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = w;
   ctx.stroke();
   ctx.globalAlpha = 1;
 }
@@ -349,43 +410,4 @@ export function eraseSegment(a, b) {
   ctx.lineTo(b.x, b.y);
   ctx.stroke();
   ctx.restore();
-}
-
-/* ----------------------------- overlay ----------------------------- */
-export function clearOverlay() {
-  octx.save();
-  octx.setTransform(1, 0, 0, 1, 0, 0);
-  octx.clearRect(0, 0, overlay.width, overlay.height);
-  octx.restore();
-}
-
-/* ------------------------------ text ------------------------------ */
-export const textSize = () => Math.max(12, Math.round(state.size * 3.2));
-
-export function renderTextOverlay() {
-  clearOverlay();
-  if (!state.text || !state.textPos) return;
-  octx.save();
-  octx.direction = 'rtl';
-  octx.font = `${textSize()}px ${state.font}`;
-  octx.fillStyle = state.color;
-  octx.globalAlpha = state.opacity;
-  octx.textAlign = 'center';
-  octx.textBaseline = 'alphabetic';
-  octx.fillText(state.text, state.textPos.x, state.textPos.y);
-  octx.restore();
-}
-
-export function commitText() {
-  if (!state.text || !state.textPos) { clearOverlay(); return; }
-  ctx.save();
-  ctx.direction = 'rtl';
-  ctx.font = `${textSize()}px ${state.font}`;
-  ctx.fillStyle = state.color;
-  ctx.globalAlpha = state.opacity;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillText(state.text, state.textPos.x, state.textPos.y);
-  ctx.restore();
-  clearOverlay();
 }

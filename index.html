@@ -4,11 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>قلم. — Arabic calligraphy</title>
-<meta name="description" content="An Arabic calligraphy canvas: a qalam nib that thickens and thins with movement, RTL text, practice guides and instant export.">
+<meta name="description" content="An Arabic calligraphy canvas: a cut-reed qalam nib with true flat angled strokes, practice guides and instant export — works offline.">
 <meta name="theme-color" content="#f5eeda">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Aref+Ruqaa:wght@400;700&family=Noto+Naskh+Arabic:wght@400;500;600;700&family=Reem+Kufi:wght@400..700&family=Scheherazade+New:wght@400;700&display=swap" rel="stylesheet">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="styles.css">
 <link rel="manifest" href="manifest.json">
@@ -51,7 +48,6 @@
 
   <div class="group">
     <button class="tool" data-tool="qalam" title="القلم (Q)"><i data-lucide="pen-line"></i></button>
-    <button class="tool" data-tool="text" title="نص (T)"><i data-lucide="type"></i></button>
     <button class="tool" data-tool="eraser" title="ممحاة (E)"><i data-lucide="eraser"></i></button>
   </div>
 
@@ -62,12 +58,11 @@
       <span id="sizeDot" class="dot-preview"></span>
     </button>
     <button id="angleBtn" class="tool wide" title="زاوية القلم (− / =)">
-      <span id="angleBadge">50°</span>
+      <span id="angleBadge">40°</span>
     </button>
     <button id="colorBtn" class="tool wide" title="الحبر">
       <span id="colorDot" class="ink-preview"></span>
     </button>
-    <button id="fontBtn" class="tool wide" title="الخط"><span id="fontBadge">نسخ</span></button>
   </div>
 
   <span class="sep"></span>
@@ -86,8 +81,9 @@
   <!-- nib angle popover -->
   <div id="anglePop" class="pop">
     <div class="pop-title">زاوية سنّ القلم</div>
-    <input id="angleRange" class="range" type="range" min="0" max="90" value="50">
-    <div class="pop-label"><span id="angleVal">50</span>°</div>
+    <div class="pop-row" id="angleRow"></div>
+    <input id="angleRange" class="range" type="range" min="0" max="90" value="40" step="1">
+    <div class="pop-label"><span id="angleVal">40</span>°</div>
   </div>
 
   <!-- ink popover -->
@@ -103,25 +99,6 @@
         <span>شفافية</span>
         <input id="opacityRange" class="range" type="range" min="10" max="100" value="100">
       </div>
-    </div>
-  </div>
-
-  <!-- fonts popover -->
-  <div id="fontPop" class="pop">
-    <div class="pop-title">اختر الخط</div>
-    <div id="fontRow" class="pop-col"></div>
-  </div>
-</div>
-
-<!-- ============================ TEXT BAR ============================ -->
-<div id="textBar" class="hidden">
-  <input id="textInput" type="text" dir="rtl" lang="ar" autocomplete="off"
-         placeholder="اكتب هنا…" maxlength="200">
-  <div class="text-info">
-    <span id="textHint"></span>
-    <div class="text-actions">
-      <button id="textOk" class="btn-outline"><i data-lucide="check"></i> إدراج</button>
-      <button id="textCancel" class="ghost" title="إلغاء (Esc)"><i data-lucide="x"></i></button>
     </div>
   </div>
 </div>
@@ -148,7 +125,7 @@
 <!-- ============================ TOAST ============================ -->
 <div id="toast"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="js/vendor/lucide.min.js"></script>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>
