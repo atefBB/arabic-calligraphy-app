@@ -28,8 +28,6 @@ export const state = {
   pressure: 1,
   drawing: false,
   pts: [],
-  baked: 0,         // how many smoothed samples are already on the page
-  cache: null,      // pre-stroke snapshot of the page while drawing
   guides: true,
   paper: { w: 0, h: 0 },                    // logical sheet size (frozen at load)
   view: { zoom: 1, panX: 0, panY: 0 },      // paper -> screen view transform
@@ -364,21 +362,166 @@ function applyInk(c) {
   c.fillStyle = state.color;
 }
 
-/* Restore a paper-space bbox of the page to its pre-stroke state, so only a
- * tiny region — not the whole page — has to be cleared & redrawn per move. */
-function restoreRegion(x0, y0, x1, y1) {
-  pctx.save();
-  pctx.setTransform(1, 0, 0, 1, 0, 0);
-  const sx = Math.max(0, Math.round(x0 * pageRatio));
-  const sy = Math.max(0, Math.round(y0 * pageRatio));
-  const ex = Math.min(page.width,  Math.ceil(x1 * pageRatio));
-  const ey = Math.min(page.height, Math.ceil(y1 * pageRatio));
-  const sw = ex - sx, sh = ey - sy;
-  if (sw > 0 && sh > 0) {
-    pctx.clearRect(sx, sy, sw, sh);
-    if (state.cache) pctx.drawImage(state.cache, sx, sy, sw, sh, sx, sy, sw, sh);
+/* ------------------------- live-stroke rendering -------------------------
+ * While a stroke is being drawn its ink is painted *directly* onto the
+ * visible board through the view transform — no off-screen work canvas and
+ * no per-move drawImage copy. The only canvas copy is at pointer-down/pen-up
+ * (baking the finished stroke onto `page` once).
+ *
+ * To keep each move O(tail): appending one pointer sample only changes the
+ * smoothed sample list near its *end* — everything up to the last ~3 samples
+ * is identical to the previous move (the shared prefix). So we
+ *  1. clear only the old tail's quads (tight per-quad rects, so the erase
+ *     never reaches back into untouched ink) and redraw the `page` content
+ *     (previous strokes / paper) back into that region, then
+ *  2. re-stamp the new tail starting ONE sample before the seam (a shared
+ *     quad) so the round-cap sliver at the junction is covered.
+ * Only if the nib parameters (pressure) changed do we fall back to re-stamping
+ * the whole stroke. `page` is written just once, at endStroke — so its
+ * re-read during the clear is a cheap "cold" canvas draw. */
+let  spOld = null;            // smoothed sample list of the previous move
+let  uOld = 0, wOld = 0;      // nib params used for the previous move
+
+function paperToDev(b) {
+  return {
+    sx: Math.max(0, Math.round(b.x0 * pageRatio)),
+    sy: Math.max(0, Math.round(b.y0 * pageRatio)),
+    ex: Math.min(page.width,  Math.ceil(b.x1 * pageRatio)),
+    ey: Math.min(page.height, Math.ceil(b.y1 * pageRatio)),
+  };
+}
+
+function unionBox(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0),
+    x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1),
+  };
+}
+
+function growBox(s, q) {
+  if (q.x < s.x0) s.x0 = q.x; if (q.x > s.x1) s.x1 = q.x;
+  if (q.y < s.y0) s.y0 = q.y; if (q.y > s.y1) s.y1 = q.y;
+}
+
+/* Axis-aligned paper bbox of everything `stampStroke` will ink from index
+ * `start` on, padded by the nib half-length + belly width so a region is
+ * never clipped. */
+function inkBounds(sp, u, w, start = 0) {
+  const s = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+  if (sp.length === 1) {
+    growBox(s, { x: sp[0].x + Math.abs(u.x) + w, y: sp[0].y + Math.abs(u.y) + w });
+    growBox(s, { x: sp[0].x - Math.abs(u.x) - w, y: sp[0].y - Math.abs(u.y) - w });
+    return s;
   }
-  pctx.restore();
+  for (let i = start; i < sp.length - 1; i++) {
+    const a = sp[i], c = sp[i + 1];
+    growBox(s, { x: a.x + u.x, y: a.y + u.y }); growBox(s, { x: a.x - u.x, y: a.y - u.y });
+    growBox(s, { x: c.x + u.x, y: c.y + u.y }); growBox(s, { x: c.x - u.x, y: c.y - u.y });
+  }
+  for (let i = start; i < sp.length; i++) growBox(s, sp[i]);
+  const pad = Math.hypot(u.x, u.y) + w;
+  s.x0 -= pad; s.y0 -= pad; s.x1 += pad; s.y1 += pad;
+  return s;
+}
+
+/* Stamp stroke samples from index `start` (all of them when 0 — a whole
+ * repaint). The context must already be in paper space. Drawing every segment
+ * keeps overlapping self-intersecting quads solid — see the sweep note below. */
+function stampStroke(c, sp, u, w, start = 0) {
+  if (sp.length === 1) {
+    const p = sp[0];
+    const pp = phi();
+    const perp = { x: -Math.sin(pp) * w / 2, y: Math.cos(pp) * w / 2 };
+    c.beginPath();
+    c.moveTo(p.x + u.x + perp.x, p.y + u.y + perp.y);
+    c.lineTo(p.x + u.x - perp.x, p.y + u.y - perp.y);
+    c.lineTo(p.x - u.x - perp.x, p.y - u.y - perp.y);
+    c.lineTo(p.x - u.x + perp.x, p.y - u.y + perp.y);
+    c.closePath();
+    c.fill();
+    return;
+  }
+  for (let i = Math.max(1, start); i < sp.length; i++) {
+    const a = sp[i - 1], c2 = sp[i];
+    c.beginPath();
+    c.moveTo(a.x + u.x, a.y + u.y);
+    c.lineTo(c2.x + u.x, c2.y + u.y);
+    c.lineTo(c2.x - u.x, c2.y - u.y);
+    c.lineTo(a.x - u.x, a.y - u.y);
+    c.closePath();
+    c.fill();
+  }
+  c.beginPath();
+  c.moveTo(sp[Math.max(0, start - 1)].x, sp[Math.max(0, start - 1)].y);
+  for (let i = Math.max(0, start - 1); i < sp.length; i++) c.lineTo(sp[i].x, sp[i].y);
+  c.lineCap = 'round';
+  c.lineJoin = 'round';
+  c.lineWidth = w;
+  c.stroke();
+}
+
+function viewSet(c) {
+  const r = dpr();
+  const { zoom, panX, panY } = state.view;
+  c.setTransform(r * zoom, 0, 0, r * zoom, r * panX, r * panY);
+}
+
+/* Paper-space bbox of the quad between two samples (tight, for the erase). */
+function quadBox(a, c, u) {
+  return {
+    x0: Math.min(a.x, c.x) - Math.abs(u.x),
+    y0: Math.min(a.y, c.y) - Math.abs(u.y),
+    x1: Math.max(a.x, c.x) + Math.abs(u.x),
+    y1: Math.max(a.y, c.y) + Math.abs(u.y),
+  };
+}
+
+/* Clear a paper box on the visible board and draw the `page` content back
+ * into it: restores paper + previous strokes beneath an erased tail. */
+function restoreRegion(b) {
+  const r = dpr();
+  const { zoom, panX, panY } = state.view;
+  const d = paperToDev(b);
+  const sw = d.ex - d.sx, sh = d.ey - d.sy;
+  if (sw <= 0 || sh <= 0) return;
+  const dx = (b.x0 * zoom + panX) * r;
+  const dy = (b.y0 * zoom + panY) * r;
+  const dw = (b.x1 - b.x0) * zoom * r;
+  const dh = (b.y1 - b.y0) * zoom * r;
+  ctx.save();
+  screenToDevice(ctx);
+  ctx.globalAlpha = 1;
+  ctx.clearRect(dx, dy, dw, dh);
+  ctx.drawImage(page, d.sx, d.sy, sw, sh, dx, dy, dw, dh);
+  ctx.restore();
+}
+
+/* Erase the old tail quads (from index d on) and re-stamp the new tail from
+ * index r, both directly on the visible board. If the nib parameters changed
+ * (pressure/size), the whole previous stroke is stale and gets re-stamped. */
+function repaintTail(sp, u, w) {
+  if (spOld && (u.x !== uOld.x || u.y !== uOld.y || w !== wOld)) {
+    restoreRegion(unionBox(inkBounds(spOld, uOld, wOld, 0), inkBounds(sp, u, w, 0)));
+    spOld = null;                       // force the full re-stamp below
+  }
+  const d = !spOld ? 0 : Math.max(0, spOld.length - 3);
+  const r = Math.max(0, d - 1);
+  if (spOld) {
+    let cleared = null;
+    for (let i = d; i < spOld.length - 2; i++) {
+      cleared = unionBox(cleared, quadBox(spOld[i], spOld[i + 1], uOld));
+    }
+    if (cleared) restoreRegion(cleared);
+  }
+  ctx.save();
+  viewSet(ctx);
+  applyInk(ctx);
+  stampStroke(ctx, sp, u, w, r);
+  ctx.restore();
+  spOld = sp;
+  uOld = u; wOld = w;
 }
 
 /* Densely resample the control points onto the actual smoothed curve so
@@ -408,127 +551,20 @@ function smoothSamples(pts) {
   return out;
 }
 
-/* Paint (or repaint) the nib sweep from smoothed sample `startIdx` onward.
- * Adding a control point shifts only the few samples at the tail, so we
- * restore just that bbox from the pre-stroke cache and re-ink it — the rest
- * of the stroke stays untouched on the page. Returns the paper-space bbox
- * that changed (for dirty-region rendering of the viewport). */
-function paintFrom(sp, startIdx) {
-  startIdx = Math.max(0, startIdx);
+function nibParams() {
   const press = 0.5 + 0.5 * state.pressure;
-  const u = nibEdge(press);
-  const w = Math.max(0.7, state.size * 0.16) * press;
-
-  if (sp.length === 1) {
-    /* A tap: the square cut edge pressed flat leaves a parallelogram mark
-     * at the cut angle — the classic nuqta. */
-    const p = sp[0];
-    const pp = phi();
-    const perp = { x: -Math.sin(pp) * w / 2, y: Math.cos(pp) * w / 2 };
-    const pad = Math.hypot(u.x, u.y) + w;
-    pctx.save();
-    pctx.setTransform(pageRatio, 0, 0, pageRatio, 0, 0);
-    applyInk(pctx);
-    pctx.beginPath();
-    pctx.moveTo(p.x + u.x + perp.x, p.y + u.y + perp.y);
-    pctx.lineTo(p.x + u.x - perp.x, p.y + u.y - perp.y);
-    pctx.lineTo(p.x - u.x - perp.x, p.y - u.y - perp.y);
-    pctx.lineTo(p.x - u.x + perp.x, p.y - u.y + perp.y);
-    pctx.closePath();
-    pctx.fill();
-    pctx.restore();
-    return { x0: p.x - pad, y0: p.y - pad, x1: p.x + pad, y1: p.y + pad };
-  }
-
-  /* Paper-space bounds of every ink pixel we are about to touch. */
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  const grow = (q) => {
-    if (q.x < x0) x0 = q.x; if (q.x > x1) x1 = q.x;
-    if (q.y < y0) y0 = q.y; if (q.y > y1) y1 = q.y;
-  };
-  for (let i = startIdx; i < sp.length - 1; i++) {
-    const a = sp[i], c = sp[i + 1];
-    grow({ x: a.x + u.x, y: a.y + u.y }); grow({ x: a.x - u.x, y: a.y - u.y });
-    grow({ x: c.x + u.x, y: c.y + u.y }); grow({ x: c.x - u.x, y: c.y - u.y });
-  }
-  for (let i = startIdx; i < sp.length; i++) grow(sp[i]);
-  const pad = Math.hypot(u.x, u.y) + w;
-  const bx0 = x0 - pad, by0 = y0 - pad, bx1 = x1 + pad, by1 = y1 + pad;
-
-  restoreRegion(bx0, by0, bx1, by1);
-
-  pctx.save();
-  pctx.setTransform(pageRatio, 0, 0, pageRatio, 0, 0);
-  applyInk(pctx);
-
-  /* The swept nib edge — the ink region of a rigid flat nib. Stamping the
-   * nib edge along each consecutive pair of samples as *separate quads*:
-   * a single merged polygon self-intersects whenever the pen returns over
-   * its own path (ج ع ل م heads, loops…) and the non-zero winding rule then
-   * cuts a hole under the return — the written ink beneath dissolves. Filling
-   * quad by quad, overlapping passages simply re-ink the same pigment, so
-   * the sweeps keep the flat cut caps and the shape stays solid. */
-  for (let i = startIdx; i < sp.length - 1; i++) {
-    const a = sp[i], c = sp[i + 1];
-    pctx.beginPath();
-    pctx.moveTo(a.x + u.x, a.y + u.y);
-    pctx.lineTo(c.x + u.x, c.y + u.y);
-    pctx.lineTo(c.x - u.x, c.y - u.y);
-    pctx.lineTo(a.x - u.x, a.y - u.y);
-    pctx.closePath();
-    pctx.fill();
-  }
-
-  /* Minimum "belly" thickness along the (partial) centre line so strokes
-   * running parallel to the nib stay ink-true (round caps fill the gaps). */
-  pctx.beginPath();
-  pctx.moveTo(sp[startIdx].x, sp[startIdx].y);
-  for (let i = startIdx + 1; i < sp.length; i++) pctx.lineTo(sp[i].x, sp[i].y);
-  pctx.lineCap = 'round';
-  pctx.lineJoin = 'round';
-  pctx.lineWidth = w;
-  pctx.stroke();
-  pctx.restore();
-
-  return { x0: bx0, y0: by0, x1: bx1, y1: by1 };
-}
-
-/* Redraw only the paper-space bbox that changed onto the viewport board
- * instead of compositing the whole page on every pointer move. */
-function renderRegion(b) {
-  const r = dpr();
-  const { zoom, panX, panY } = state.view;
-  const sx = Math.max(0, Math.floor(b.x0 * pageRatio));
-  const sy = Math.max(0, Math.floor(b.y0 * pageRatio));
-  const ex = Math.min(page.width,  Math.ceil(b.x1 * pageRatio));
-  const ey = Math.min(page.height, Math.ceil(b.y1 * pageRatio));
-  const sw = ex - sx, sh = ey - sy;
-  if (sw <= 0 || sh <= 0) return;
-  const dx = (b.x0 * zoom + panX) * r;
-  const dy = (b.y0 * zoom + panY) * r;
-  const dw = (b.x1 - b.x0) * zoom * r;
-  const dh = (b.y1 - b.y0) * zoom * r;
-  ctx.save();
-  screenToDevice(ctx);
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = PAPER;
-  ctx.fillRect(dx, dy, dw, dh);
-  ctx.drawImage(page, sx, sy, sw, sh, dx, dy, dw, dh);
-  ctx.restore();
+  return { u: nibEdge(press), w: Math.max(0.7, state.size * 0.16) * press };
 }
 
 export function startStroke(p, pressure = 1) {
   state.drawing = true;
   state.pts = [p];
   state.pressure = pressure;
-  state.baked = 0;
-  state.cache = document.createElement('canvas');
-  state.cache.width = page.width;
-  state.cache.height = page.height;
-  state.cache.getContext('2d').drawImage(page, 0, 0);
   if (state.tool === 'qalam') {
-    renderRegion(paintFrom(smoothSamples(state.pts), 0));
-    state.baked = 1;
+    spOld = null; uOld = 0; wOld = 0;    // any leftover tail is gone
+    const sp = smoothSamples(state.pts);
+    const { u, w } = nibParams();
+    repaintTail(sp, u, w);
   }
 }
 
@@ -542,25 +578,34 @@ export function extendStroke(p, pressure = 1) {
   if (state.tool === 'eraser') {
     eraseSegment(last, p);
     const pad = Math.max(state.size * 1.4, 8) / 2;
-    renderRegion({
+    restoreRegion({
       x0: Math.min(last.x, p.x) - pad, y0: Math.min(last.y, p.y) - pad,
       x1: Math.max(last.x, p.x) + pad, y1: Math.max(last.y, p.y) + pad,
     });
     return;
   }
-  /* Only the last few smoothed samples shift when a control point is added,
-   * so repaint just that tail — not the whole stroke — and composite only
-   * the dirty paper bbox. Constant cost per move regardless of stroke size. */
-  const sp = smoothSamples(pts);
-  renderRegion(paintFrom(sp, state.baked - 3));
-  state.baked = sp.length;
+  if (state.tool === 'qalam') {
+    const sp = smoothSamples(state.pts);
+    const { u, w } = nibParams();
+    repaintTail(sp, u, w);
+  }
 }
 
 export function endStroke() {
   if (!state.drawing) return;
   state.drawing = false;
+  if (state.tool === 'qalam') {
+    const sp = smoothSamples(state.pts);
+    const { u, w } = nibParams();
+    pctx.save();
+    pctx.setTransform(pageRatio, 0, 0, pageRatio, 0, 0);
+    applyInk(pctx);
+    stampStroke(pctx, sp, u, w, 0);
+    pctx.restore();
+    spOld = null;
+    uOld = 0; wOld = 0;
+  }
   state.pts = [];
-  state.cache = null;
   state.pressure = 1;
   render();
 }
